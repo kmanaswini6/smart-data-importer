@@ -1,0 +1,16 @@
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+.env
+backend/.env
+frontend/.env.local
+
+backend/uploads/*
+!backend/uploads/.gitkeep
+dist/
+build/
+
+*.log
+.DS_Store
+Thumbs.db
