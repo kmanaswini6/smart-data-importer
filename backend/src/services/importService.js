@@ -2,11 +2,11 @@ const pool = require('../../db/connection');
 
 /**
  * Processes data persistence using bounded transactions and high-speed batching.
- * Isolates and routes DB constraint updates safely without halting the importer.
+ * High-performance variation optimized to handle thousands of rows via chunked bulk inputs.
  * 
- * @param {number} importId - The relational index pointing to the active tracking item in the imports table.
- * @param {Array<Object>} validRows - Sanitized row array matching { name, email, phone, age }.
- * @param {Array<Object>} preValidatedErrors - Rows that failed the Phase 3 validation engine stage.
+ * @param {number} importId - Relational index pointing to the active tracking item.
+ * @param {Array<Object>} validRows - Sanitized row array matching target schemas.
+ * @param {Array<Object>} preValidatedErrors - Rows that failed initial validation checks.
  * @returns {Promise<Object>} Final state tracking information.
  */
 async function processDataImport(importId, validRows, preValidatedErrors) {
@@ -14,41 +14,35 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
 
     let totalValidInserted = 0;
     let totalInvalidRecorded = 0;
-
     const BATCH_SIZE = 500;
 
-    // 1. First, persist pre-validated validation errors directly to import_errors
+    // 1. High-speed Bulk Batching for Pre-Validated Errors (Eliminates single loop stalls)
     if (preValidatedErrors && preValidatedErrors.length > 0) {
-        const errorInsertQuery = `
-            INSERT INTO import_errors (import_id, \`row_number\`, reason, raw_data)
-            VALUES (?, ?, ?, ?)
-        `;
-        for (const errorRow of preValidatedErrors) {
-            try {
-                await pool.execute(errorInsertQuery, [
-                    importId,
-                    errorRow.rowNumber,
-                    errorRow.reason,
-                    JSON.stringify(errorRow.rawData)
-                ]);
-                totalInvalidRecorded++;
-            } catch (err) {
-                console.error(`Failed to write pre-validated error log at row ${errorRow.rowNumber}:`, err);
-            }
+        for (let i = 0; i < preValidatedErrors.length; i += BATCH_SIZE) {
+            const batch = preValidatedErrors.slice(i, i + BATCH_SIZE);
+            const errorValues = batch.map(errorRow => [
+                importId,
+                errorRow.rowNumber,
+                errorRow.reason,
+                JSON.stringify(errorRow.rawData)
+            ]);
+
+            const errorInsertQuery = `
+                INSERT INTO import_errors (import_id, \`row_number\`, reason, raw_data)
+                VALUES ?
+            `;
+            await pool.query(errorInsertQuery, [errorValues]);
+            totalInvalidRecorded += batch.length;
         }
     }
 
     // 2. Process valid rows in chunked sizes of 500
     for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
         const batch = validRows.slice(i, i + BATCH_SIZE);
-
-        // Get an isolated connection from the pool to secure manual transaction execution control
         const connection = await pool.getConnection();
 
         try {
             await connection.beginTransaction();
-
-            // Structure multi-row insertions parameters into arrays: [[importId, name, email, phone, age], ...]
             const insertValues = batch.map(row => [
                 importId,
                 row.name,
@@ -62,30 +56,25 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
                 VALUES ?
             `;
 
-            // Execute high-speed batch insertion statement
             await connection.query(bulkInsertQuery, [insertValues]);
             await connection.commit();
-
             totalValidInserted += batch.length;
 
         } catch (batchError) {
-            // A conflict occurred (e.g., unique email violation). Roll back the entire batch.
             await connection.rollback();
-            console.warn(`Batch processing boundary conflict encountered between indexes ${i} and ${i + batch.length}. Dropping down to singular row inspection mode.`);
+            console.warn(`Batch boundary conflict hit. Falling back to single row recovery.`);
 
-            // Fall back to item-by-item processing to protect clean records and catch the database violation rows
+            // Item-by-item fallback recovery loop to isolate unique constraint violations
             for (let j = 0; j < batch.length; j++) {
                 const individualRow = batch[j];
                 const cleanConnection = await pool.getConnection();
 
                 try {
                     await cleanConnection.beginTransaction();
-
                     const singleInsertQuery = `
                         INSERT INTO customers (import_id, name, email, phone, age)
                         VALUES (?, ?, ?, ?, ?)
                     `;
-
                     await cleanConnection.execute(singleInsertQuery, [
                         importId,
                         individualRow.name,
@@ -93,25 +82,20 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
                         individualRow.phone,
                         individualRow.age
                     ]);
-
                     await cleanConnection.commit();
                     totalValidInserted++;
-
                 } catch (singleRowError) {
                     await cleanConnection.rollback();
 
-                    // Determine if failure matches database duplicate constraints
                     const isDuplicate = singleRowError.code === 'ER_DUP_ENTRY' || singleRowError.errno === 1062;
                     const errorReason = isDuplicate
                         ? 'duplicate email in database'
-                        : `Database integration constraint error: ${singleRowError.message}`;
+                        : `Database integrity constraint error: ${singleRowError.message}`;
 
                     const fallBackErrorLogQuery = `
                         INSERT INTO import_errors (import_id, \`row_number\`, reason, raw_data)
                         VALUES (?, ?, ?, ?)
                     `;
-
-                    // Reconstruct an approximate row position index for context logging
                     const estimatedFileRowNumber = i + j + 2;
 
                     await pool.execute(fallBackErrorLogQuery, [
@@ -125,29 +109,23 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
                             age: individualRow.age
                         })
                     ]);
-
                     totalInvalidRecorded++;
                 } finally {
                     cleanConnection.release();
                 }
             }
-
         } finally {
             connection.release();
         }
     }
 
-    // 3. Update the primary metadata ledger tracking item status to 'completed'
-    try {
-        const updateSummaryQuery = `
-            UPDATE imports 
-            SET valid_rows = ?, invalid_rows = ?, status = 'completed'
-            WHERE id = ?
-        `;
-        await pool.execute(updateSummaryQuery, [totalValidInserted, totalInvalidRecorded, importId]);
-    } catch (summaryUpdateError) {
-        console.error(`Critically failed to update summary ledger status metrics for import entry ID: ${importId}`, summaryUpdateError);
-    }
+    // 3. Complete structural update to metrics tracker ledger item
+    const updateSummaryQuery = `
+        UPDATE imports 
+        SET valid_rows = ?, invalid_rows = ?, status = 'completed'
+        WHERE id = ?
+    `;
+    await pool.execute(updateSummaryQuery, [totalValidInserted, totalInvalidRecorded, importId]);
 
     return {
         importId,
