@@ -1,8 +1,11 @@
 const path = require('path');
 const fs = require('fs');
+const csvParser = require('csv-parser');
 const pool = require('../../db/connection');
 const { parseCsvStream } = require('../services/csvService');
 const { generateMappings } = require('../services/mappingService');
+const { validateImportRows } = require('../services/validationService');
+const { processDataImport } = require('../services/importService');
 
 async function handleCsvUpload(req, res) {
     if (!req.file) {
@@ -36,9 +39,6 @@ async function handleCsvUpload(req, res) {
             rowCount
         ]);
 
-        // Phase 2: compute auto-mapping suggestions from the parsed headers.
-        // This is pure in-memory computation — no DB/network call, so no
-        // try/catch needed beyond the outer block already wrapping this.
         const mappings = generateMappings(headers);
 
         return res.status(200).json({
@@ -63,4 +63,59 @@ async function handleCsvUpload(req, res) {
     }
 }
 
-module.exports = { handleCsvUpload };
+/**
+ * Reads the temporarily saved file, runs the validation checks, 
+ * and commits records to the database.
+ */
+async function confirmImport(req, res) {
+    const importId = req.params.id;
+    const { mapping, filePath } = req.body;
+
+    if (!importId || !mapping || !filePath) {
+        return res.status(400).json({ error: 'Missing required validation payload parameters.' });
+    }
+
+    if (!fs.existsSync(filePath)) {
+        return res.status(400).json({ error: 'The uploaded file cache has expired or was not found on disk.' });
+    }
+
+    const rawRows = [];
+
+    // Stream parse every row from disk into memory for processing
+    fs.createReadStream(filePath)
+        .pipe(csvParser())
+        .on('data', (data) => rawRows.push(data))
+        .on('end', async () => {
+            try {
+                // 1. Run validation engine rules
+                const { validRows, invalidRows } = validateImportRows(rawRows, mapping);
+
+                // 2. Execute bounded batch database transactions
+                const summary = await processDataImport(importId, validRows, invalidRows);
+
+                // 3. Clean up the temporary file from the disk storage directory
+                try {
+                    if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                    }
+                } catch (err) {
+                    console.error('Non-blocking temporary file removal cleanup failure:', err);
+                }
+
+                return res.status(200).json(summary);
+
+            } catch (err) {
+                console.error('Ingestion pipeline execution failure:', err);
+                return res.status(500).json({ error: 'Failed to execute import mapping steps.', details: err.message });
+            }
+        })
+        .on('error', (streamError) => {
+            console.error('File stream parsing failure:', streamError);
+            return res.status(500).json({ error: 'Failed to read data from source file cache.' });
+        });
+}
+
+module.exports = {
+    handleCsvUpload,
+    confirmImport
+};
