@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const pool = require('../../db/connection');
 const { parseCsvStream } = require('../services/csvService');
+const { generateMappings } = require('../services/mappingService');
 
 async function handleCsvUpload(req, res) {
     if (!req.file) {
@@ -35,17 +36,22 @@ async function handleCsvUpload(req, res) {
             rowCount
         ]);
 
+        // Phase 2: compute auto-mapping suggestions from the parsed headers.
+        // This is pure in-memory computation — no DB/network call, so no
+        // try/catch needed beyond the outer block already wrapping this.
+        const mappings = generateMappings(headers);
+
         return res.status(200).json({
             importId: result.insertId,
             headers,
             sample,
             rowCount,
-            filePath
+            filePath,
+            mappings
         });
 
     } catch (error) {
         console.error('CSV Processing Error:', error);
-
         try {
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
@@ -53,14 +59,8 @@ async function handleCsvUpload(req, res) {
         } catch (unlinkError) {
             console.error('Failed to clean up file:', unlinkError);
         }
-
-        return res.status(500).json({
-            error: 'Failed to process the CSV file.',
-            details: error.message
-        });
+        return res.status(500).json({ error: 'Failed to process the CSV file.', details: error.message });
     }
 }
 
-module.exports = {
-    handleCsvUpload
-};
+module.exports = { handleCsvUpload };

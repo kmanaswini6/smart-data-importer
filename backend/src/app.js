@@ -3,7 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const uploadRoutes = require('./routes/upload');
 
-dotenv.config();
+dotenv.config({ path: require('path').join(__dirname, '../../.env') });
 
 const app = express();
 const port = process.env.PORT || 5000;
