@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: sdi-mysql-node
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: industrial_pass_2026
+      MYSQL_DATABASE: smart_data_importer
+    ports:
+      - "3307:3306"
+    volumes:
+      - sdi_mysql_data:/var/lib/mysql
+
+  backend:
+    build: ./backend
+    container_name: sdi-backend-api
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - DB_HOST=db
+      - DB_USER=root
+      - DB_PASSWORD=industrial_pass_2026
+      - DB_NAME=smart_data_importer
+      - JWT_SECRET=super_secret_industrial_key_2026
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: sdi-frontend-ui
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  sdi_mysql_data:

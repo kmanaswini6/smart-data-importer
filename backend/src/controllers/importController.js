@@ -6,8 +6,8 @@ const { validateImportRows } = require('../services/validationService');
 const { processDataImport } = require('../services/importService');
 
 /**
- * Streams the full CSV file from disk, applies clear state resets,
- * parses lines safely, and executes database persistence pipelines.
+ * Streams the CSV file from disk, processes mapping validations, 
+ * and commits actual row metrics back to the tracking database.
  */
 async function processImport(req, res) {
     const importId = req.params.id;
@@ -24,7 +24,17 @@ async function processImport(req, res) {
             return res.status(404).json({ error: `Target source file not found on disk: ${filePath}` });
         }
 
-        // 1. CLEAN SLATE ISOLATION: Wipe previous attempts for this import ID to prevent duplicate logs
+        // SECURITY CHECK: Verify that this specific import job belongs to the logged-in user
+        const [importRecord] = await pool.execute(
+            'SELECT id FROM imports WHERE id = ? AND (user_id = ? OR user_id IS NULL)',
+            [importId, req.user.id]
+        );
+
+        if (importRecord.length === 0) {
+            return res.status(403).json({ error: 'Access denied. Unauthorized import execution sequence.' });
+        }
+
+        // Wipe previous attempts for this import ID to prevent duplicate logs
         await pool.execute('DELETE FROM import_errors WHERE import_id = ?', [importId]);
         await pool.execute('DELETE FROM customers WHERE import_id = ?', [importId]);
 
@@ -37,7 +47,6 @@ async function processImport(req, res) {
         for await (const line of rl) {
             if (!line.trim()) continue;
 
-            // Quote-aware CSV splitter regex: splits by commas only outside matching quote marks
             const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
                 .map(v => v.replace(/^"|"$/g, '').trim());
 
@@ -52,11 +61,22 @@ async function processImport(req, res) {
             }
         }
 
-        // 2. Validate parsed structures against confirmed mapping assignments
+        // FIXED: Passing the frontend mapping configuration straight through without modification
         const { validRows, invalidRows } = validateImportRows(rawRows, mapping);
 
-        // 3. Batch insert clean records and log anomalies in a single pass
+        // Batch insert clean records and log anomalies
         const result = await processDataImport(importId, validRows, invalidRows);
+
+        // METRIC PERSISTENCE: Write the calculated summary metrics back to the parent ledger record
+        const totalRowsCount = validRows.length + invalidRows.length;
+        const finalStatus = invalidRows.length > 0 ? 'warning' : 'completed';
+
+        await pool.execute(
+            `UPDATE imports 
+             SET total_rows = ?, valid_rows = ?, invalid_rows = ?, status = ? 
+             WHERE id = ?`,
+            [totalRowsCount, validRows.length, invalidRows.length, finalStatus, importId]
+        );
 
         return res.status(200).json(result);
     } catch (error) {
@@ -70,8 +90,11 @@ async function processImport(req, res) {
 
 async function getAllImports(req, res) {
     try {
-        const query = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status FROM imports ORDER BY uploaded_at DESC`;
-        const [rows] = await pool.execute(query);
+        const query = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status 
+                       FROM imports 
+                       WHERE user_id = ? OR user_id IS NULL 
+                       ORDER BY uploaded_at DESC`;
+        const [rows] = await pool.execute(query, [req.user.id]);
         return res.status(200).json(rows);
     } catch (error) {
         return res.status(500).json({ error: 'Failed to retrieve imports ledger history.' });
@@ -81,10 +104,14 @@ async function getAllImports(req, res) {
 async function getImportById(req, res) {
     const importId = req.params.id;
     try {
-        const statsQuery = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status FROM imports WHERE id = ?`;
-        const [statsRows] = await pool.execute(statsQuery, [importId]);
+        const statsQuery = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status 
+                            FROM imports 
+                            WHERE id = ? AND (user_id = ? OR user_id IS NULL)`;
+        const [statsRows] = await pool.execute(statsQuery, [importId, req.user.id]);
 
-        if (statsRows.length === 0) return res.status(404).json({ error: 'Record not located.' });
+        if (statsRows.length === 0) {
+            return res.status(403).json({ error: 'Access denied. Unauthorized data profile allocation.' });
+        }
 
         const errorsQuery = `SELECT id, \`row_number\`, reason, raw_data FROM import_errors WHERE import_id = ? ORDER BY \`row_number\` ASC`;
         const [errorRows] = await pool.execute(errorsQuery, [importId]);
