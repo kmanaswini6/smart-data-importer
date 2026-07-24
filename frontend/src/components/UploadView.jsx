@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { TOKENS } from './LedgerPrimitives';
+import { AuthContext } from '../context/AuthContext';
 
 export default function UploadView({ history = [], onUpload, onSelectHistory }) {
     const [isDragging, setIsDragging] = useState(false);
     const [processing, setProcessing] = useState(false);
     const [spinnerFrame, setSpinnerFrame] = useState('|');
+    const { getFreshToken } = useContext(AuthContext);
 
     useEffect(() => {
         if (!processing) return;
@@ -20,11 +22,21 @@ export default function UploadView({ history = [], onUpload, onSelectHistory }) 
     }, [processing]);
 
     const handleFileSubmission = async (e) => {
-        const file = e.target.files[0];
+        const files = e.target.files || (e.dataTransfer && e.dataTransfer.files);
+        const file = files && files[0];
         if (!file) return;
+
         setProcessing(true);
-        await onUpload(file);
-        setProcessing(false);
+        try {
+            if (getFreshToken) {
+                await getFreshToken();
+            }
+            await onUpload(file);
+        } catch (error) {
+            console.error("Upload execution error:", error);
+        } finally {
+            setProcessing(false);
+        }
     };
 
     return (
@@ -42,7 +54,7 @@ export default function UploadView({ history = [], onUpload, onSelectHistory }) 
                     style={{ display: 'block', border: `1px dashed ${TOKENS.inkCharcoal}`, padding: '56px 20px', textAlign: 'center', backgroundColor: isDragging ? TOKENS.bgHover : 'rgba(34,31,29,0.02)', cursor: 'pointer', marginBottom: '44px', transition: 'background-color 0.12s ease-in-out' }}
                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                     onDragLeave={() => setIsDragging(false)}
-                    onDrop={(e) => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) handleFileSubmission({ target: { files: e.dataTransfer.files } }); }}
+                    onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFileSubmission(e); }}
                 >
                     <span style={{ fontSize: '14px', fontWeight: '600', color: TOKENS.inkCharcoal }}>Drop a CSV to begin, or click to browse.</span>
                     <input type="file" accept=".csv" onChange={handleFileSubmission} style={{ display: 'none' }} />

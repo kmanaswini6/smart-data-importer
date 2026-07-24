@@ -24,17 +24,20 @@ async function processImport(req, res) {
             return res.status(404).json({ error: `Target source file not found on disk: ${filePath}` });
         }
 
-        // SECURITY CHECK: Verify that this specific import job belongs to the logged-in user
+        // Safe user context extraction
+        const userId = (req.user && req.user.id) ? req.user.id : null;
+
+        // Verify import job ownership
         const [importRecord] = await pool.execute(
             'SELECT id FROM imports WHERE id = ? AND (user_id = ? OR user_id IS NULL)',
-            [importId, req.user.id]
+            [importId, userId]
         );
 
         if (importRecord.length === 0) {
             return res.status(403).json({ error: 'Access denied. Unauthorized import execution sequence.' });
         }
 
-        // Wipe previous attempts for this import ID to prevent duplicate logs
+        // Clear previous runs for this import ID
         await pool.execute('DELETE FROM import_errors WHERE import_id = ?', [importId]);
         await pool.execute('DELETE FROM customers WHERE import_id = ?', [importId]);
 
@@ -61,13 +64,10 @@ async function processImport(req, res) {
             }
         }
 
-        // FIXED: Passing the frontend mapping configuration straight through without modification
         const { validRows, invalidRows } = validateImportRows(rawRows, mapping);
 
-        // Batch insert clean records and log anomalies
         const result = await processDataImport(importId, validRows, invalidRows);
 
-        // METRIC PERSISTENCE: Write the calculated summary metrics back to the parent ledger record
         const totalRowsCount = validRows.length + invalidRows.length;
         const finalStatus = invalidRows.length > 0 ? 'warning' : 'completed';
 
@@ -80,7 +80,7 @@ async function processImport(req, res) {
 
         return res.status(200).json(result);
     } catch (error) {
-        console.error('Pipeline processing execution failed:', error);
+        console.error('Pipeline processing execution failed:', error.message || error);
         return res.status(500).json({
             error: 'Failed to execute transaction data integration pipeline.',
             details: error.message
@@ -90,24 +90,30 @@ async function processImport(req, res) {
 
 async function getAllImports(req, res) {
     try {
+        const userId = (req.user && req.user.id) ? req.user.id : null;
+
         const query = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status 
                        FROM imports 
                        WHERE user_id = ? OR user_id IS NULL 
                        ORDER BY uploaded_at DESC`;
-        const [rows] = await pool.execute(query, [req.user.id]);
-        return res.status(200).json(rows);
+
+        const [rows] = await pool.execute(query, [userId]);
+        return res.status(200).json(rows || []);
     } catch (error) {
-        return res.status(500).json({ error: 'Failed to retrieve imports ledger history.' });
+        console.error('Fetch history error:', error.message || error);
+        return res.status(500).json({ error: 'Failed to retrieve imports ledger history.', details: error.message });
     }
 }
 
 async function getImportById(req, res) {
     const importId = req.params.id;
     try {
+        const userId = (req.user && req.user.id) ? req.user.id : null;
+
         const statsQuery = `SELECT id, filename, uploaded_at, total_rows, valid_rows, invalid_rows, status 
                             FROM imports 
                             WHERE id = ? AND (user_id = ? OR user_id IS NULL)`;
-        const [statsRows] = await pool.execute(statsQuery, [importId, req.user.id]);
+        const [statsRows] = await pool.execute(statsQuery, [importId, userId]);
 
         if (statsRows.length === 0) {
             return res.status(403).json({ error: 'Access denied. Unauthorized data profile allocation.' });
@@ -121,7 +127,8 @@ async function getImportById(req, res) {
 
         return res.status(200).json({ stats: statsRows[0], errors: errorRows, preview: previewRows });
     } catch (error) {
-        return res.status(500).json({ error: 'Internal server reporting error.' });
+        console.error('Get import by ID error:', error.message || error);
+        return res.status(500).json({ error: 'Internal server reporting error.', details: error.message });
     }
 }
 

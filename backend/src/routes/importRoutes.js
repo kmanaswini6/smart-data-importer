@@ -21,16 +21,19 @@ router.post('/import/upload', verifyToken, upload.single('file'), async (req, re
             const fileStream = fs.createReadStream(req.file.path);
             const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
 
-            for await (const line of rl) {
-                if (line.trim()) {
-                    headers = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
-                        .map(h => h.replace(/^"|"$/g, '').trim())
-                        .filter(h => h.length > 0);
-                    break;
+            try {
+                for await (const line of rl) {
+                    if (line.trim()) {
+                        headers = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+                            .map(h => h.replace(/^"|"$/g, '').trim())
+                            .filter(h => h.length > 0);
+                        break;
+                    }
                 }
+            } finally {
+                rl.close();
+                fileStream.destroy();
             }
-            rl.close();
-            fileStream.destroy();
         }
 
         const targetFields = ['name', 'email', 'phone', 'age'];
@@ -42,7 +45,6 @@ router.post('/import/upload', verifyToken, upload.single('file'), async (req, re
             targetFields.forEach(f => { predictedMap[f] = ''; });
         }
 
-        // FIXED: Case-insensitive and whitespace-trimmed matching optimization layer
         const formattedMappings = headers.map(header => {
             const cleanedHeader = header.toLowerCase().trim();
 
@@ -58,11 +60,14 @@ router.post('/import/upload', verifyToken, upload.single('file'), async (req, re
             };
         });
 
+        // Safe extraction prevents mysql2 bind parameter exceptions
+        const userId = (req.user && req.user.id) ? req.user.id : null;
+
         const query = `
             INSERT INTO imports (filename, uploaded_at, total_rows, valid_rows, invalid_rows, status, user_id) 
             VALUES (?, NOW(), 0, 0, 0, 'uploaded', ?)
         `;
-        const [result] = await pool.execute(query, [req.file.originalname, req.user.id]);
+        const [result] = await pool.execute(query, [req.file.originalname, userId]);
 
         return res.status(201).json({
             message: 'File staged on disk successfully.',
@@ -73,8 +78,8 @@ router.post('/import/upload', verifyToken, upload.single('file'), async (req, re
         });
 
     } catch (error) {
-        console.error('File registration sequence failed:', error);
-        return res.status(500).json({ error: 'Internal system tracking initialization error.' });
+        console.error('File registration sequence failed:', error.message || error);
+        return res.status(500).json({ error: `Internal system tracking error: ${error.message}` });
     }
 });
 

@@ -1,50 +1,65 @@
-import React, { createContext, useState } from 'react';
+import React, { createContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { auth, googleProvider } from '../firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-    // Synchronously extract and reconstruct user profiles on application initialization
-    const [user, setUser] = useState(() => {
-        const storedUser = localStorage.getItem('user');
-        return storedUser ? JSON.parse(storedUser) : null;
-    });
+    const [user, setUser] = useState(null);
+    const [token, setToken] = useState(null);
+    const [loading, setLoading] = useState(true);
 
-    // Validate token integrity and register network authorization strings instantly
-    const [token, setToken] = useState(() => {
-        const storedToken = localStorage.getItem('token');
-        if (storedToken && storedToken !== 'undefined' && storedToken !== 'null') {
-            // Apply header binding synchronously before rendering components
-            axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
-            return storedToken;
-        }
-        return null;
-    });
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            if (currentUser) {
+                const idToken = await currentUser.getIdToken();
+                setUser(currentUser);
+                setToken(idToken);
+                localStorage.setItem('token', idToken);
+                axios.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
+            } else {
+                setUser(null);
+                setToken(null);
+                localStorage.removeItem('token');
+                delete axios.defaults.headers.common['Authorization'];
+            }
+            setLoading(false);
+        });
 
-    const login = async (email, password) => {
-        const response = await axios.post('http://localhost:5000/api/auth/login', { email, password });
-        const { token: receivedToken, user: userData } = response.data;
+        return () => unsubscribe();
+    }, []);
 
-        localStorage.setItem('token', receivedToken);
-        localStorage.setItem('user', JSON.stringify(userData));
-
-        axios.defaults.headers.common['Authorization'] = `Bearer ${receivedToken}`;
-        setToken(receivedToken);
-        setUser(userData);
-        return userData;
+    const loginWithGoogle = async () => {
+        const result = await signInWithPopup(auth, googleProvider);
+        const idToken = await result.user.getIdToken();
+        setUser(result.user);
+        setToken(idToken);
+        axios.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
+        return result.user;
     };
 
-    const logout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        delete axios.defaults.headers.common['Authorization'];
-        setToken(null);
+    const logout = async () => {
+        await signOut(auth);
         setUser(null);
+        setToken(null);
+        localStorage.removeItem('token');
+        delete axios.defaults.headers.common['Authorization'];
+    };
+
+    const getFreshToken = async () => {
+        if (auth.currentUser) {
+            const freshToken = await auth.currentUser.getIdToken(true);
+            setToken(freshToken);
+            axios.defaults.headers.common['Authorization'] = `Bearer ${freshToken}`;
+            return freshToken;
+        }
+        return token;
     };
 
     return (
-        <AuthContext.Provider value={{ user, token, login, logout }}>
-            {children}
+        <AuthContext.Provider value={{ user, token, loading, loginWithGoogle, logout, getFreshToken }}>
+            {!loading && children}
         </AuthContext.Provider>
     );
 };

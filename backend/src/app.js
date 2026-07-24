@@ -3,11 +3,10 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 
-// Ensure absolute path resolution path logic remains fully functional
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const uploadRoutes = require('./routes/upload');
-const importRoutes = require('./routes/importRoutes'); // Load new endpoints
+const importRoutes = require('./routes/importRoutes');
 const authRoutes = require('./routes/authRoutes');
 
 const app = express();
@@ -16,9 +15,9 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Mount all core feature API routes
+// Mount core feature API routes
 app.use('/api', uploadRoutes);
-app.use('/api', importRoutes); // Mount reporting endpoints
+app.use('/api', importRoutes);
 app.use('/api', authRoutes);
 
 app.get('/health', (req, res) => {

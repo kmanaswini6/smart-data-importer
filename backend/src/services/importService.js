@@ -16,7 +16,7 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
     let totalInvalidRecorded = 0;
     const BATCH_SIZE = 500;
 
-    // 1. High-speed Bulk Batching for Pre-Validated Errors (Eliminates single loop stalls)
+    // 1. High-speed Bulk Batching for Pre-Validated Errors
     if (preValidatedErrors && preValidatedErrors.length > 0) {
         for (let i = 0; i < preValidatedErrors.length; i += BATCH_SIZE) {
             const batch = preValidatedErrors.slice(i, i + BATCH_SIZE);
@@ -39,8 +39,9 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
     // 2. Process valid rows in chunked sizes of 500
     for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
         const batch = validRows.slice(i, i + BATCH_SIZE);
-        const connection = await pool.getConnection();
+        let batchSucceeded = false;
 
+        const connection = await pool.getConnection();
         try {
             await connection.beginTransaction();
             const insertValues = batch.map(row => [
@@ -59,12 +60,16 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
             await connection.query(bulkInsertQuery, [insertValues]);
             await connection.commit();
             totalValidInserted += batch.length;
-
+            batchSucceeded = true;
         } catch (batchError) {
             await connection.rollback();
             console.warn(`Batch boundary conflict hit. Falling back to single row recovery.`);
+        } finally {
+            connection.release(); // Explicitly release batch connection prior to entering single row fallback
+        }
 
-            // Item-by-item fallback recovery loop to isolate unique constraint violations
+        // Single-row recovery fallback loop if bulk batch insert failed
+        if (!batchSucceeded) {
             for (let j = 0; j < batch.length; j++) {
                 const individualRow = batch[j];
                 const cleanConnection = await pool.getConnection();
@@ -89,20 +94,19 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
 
                     const isDuplicate = singleRowError.code === 'ER_DUP_ENTRY' || singleRowError.errno === 1062;
                     const errorReason = isDuplicate
-                        ? 'duplicate email in database'
+                        ? `Duplicate email detected in database: '${individualRow.email}'`
                         : `Database integrity constraint error: ${singleRowError.message}`;
 
                     const fallBackErrorLogQuery = `
                         INSERT INTO import_errors (import_id, \`row_number\`, reason, raw_data)
                         VALUES (?, ?, ?, ?)
                     `;
-                    const estimatedFileRowNumber = i + j + 2;
 
                     await pool.execute(fallBackErrorLogQuery, [
                         importId,
-                        estimatedFileRowNumber,
+                        individualRow.rowNumber || (i + j + 2),
                         errorReason,
-                        JSON.stringify({
+                        JSON.stringify(individualRow.rawData || {
                             name: individualRow.name,
                             email: individualRow.email,
                             phone: individualRow.phone,
@@ -114,24 +118,32 @@ async function processDataImport(importId, validRows, preValidatedErrors) {
                     cleanConnection.release();
                 }
             }
-        } finally {
-            connection.release();
         }
     }
 
-    // 3. Complete structural update to metrics tracker ledger item
+    // 3. Structural update to metrics tracker ledger item
+    const finalStatus = totalInvalidRecorded > 0 ? 'warning' : 'completed';
+    const totalRows = totalValidInserted + totalInvalidRecorded;
+
     const updateSummaryQuery = `
         UPDATE imports 
-        SET valid_rows = ?, invalid_rows = ?, status = 'completed'
+        SET total_rows = ?, valid_rows = ?, invalid_rows = ?, status = ?
         WHERE id = ?
     `;
-    await pool.execute(updateSummaryQuery, [totalValidInserted, totalInvalidRecorded, importId]);
+    await pool.execute(updateSummaryQuery, [
+        totalRows,
+        totalValidInserted,
+        totalInvalidRecorded,
+        finalStatus,
+        importId
+    ]);
 
     return {
         importId,
+        totalRows,
         validCount: totalValidInserted,
         invalidCount: totalInvalidRecorded,
-        status: 'completed'
+        status: finalStatus
     };
 }
 

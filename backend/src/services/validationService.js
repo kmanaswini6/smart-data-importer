@@ -32,7 +32,6 @@ function validateImportRows(rawRows, mapping) {
     const seenEmailsInFile = new Set();
 
     // Invert the mapping to easily locate which source column matches our system field
-    // Result structure: { name: "Full Name", email: "Email Address" }
     const targetToSourceMap = {};
     for (const [sourceCol, targetField] of Object.entries(mapping)) {
         if (targetField) {
@@ -41,12 +40,10 @@ function validateImportRows(rawRows, mapping) {
     }
 
     // Process every single row systematically. 
-    // Data rows in a CSV typically start at index 0, which corresponds to row number 2 in the physical file.
     for (let index = 0; index < rawRows.length; index++) {
         const rawRow = rawRows[index];
         const rowNumber = index + 2;
 
-        // Extract and clean raw values using our inverted map configurations
         const sourceNameKey = targetToSourceMap['name'];
         const sourceEmailKey = targetToSourceMap['email'];
         const sourcePhoneKey = targetToSourceMap['phone'];
@@ -57,29 +54,28 @@ function validateImportRows(rawRows, mapping) {
         const rawPhone = sourcePhoneKey ? rawRow[sourcePhoneKey] : undefined;
         const rawAge = sourceAgeKey ? rawRow[sourceAgeKey] : undefined;
 
-        // Strip leading/trailing whitespaces to eliminate dirty formatting strings
         const cleanedName = rawName !== undefined && rawName !== null ? String(rawName).trim() : '';
         const cleanedEmail = rawEmail !== undefined && rawEmail !== null ? String(rawEmail).trim() : '';
 
-        // Handle optional phone number fields. Clean out dashes, spaces or parenthesis commonly added by users.
+        // Strip non-digits. Remove leading '1' if an 11-digit US country code is passed.
         let cleanedPhone = rawPhone !== undefined && rawPhone !== null ? String(rawPhone).trim() : '';
         if (cleanedPhone) {
-            cleanedPhone = cleanedPhone.replace(/[\s\-\(\)]/g, '');
+            cleanedPhone = cleanedPhone.replace(/\D/g, '');
+            if (cleanedPhone.length === 11 && cleanedPhone.startsWith('1')) {
+                cleanedPhone = cleanedPhone.slice(1);
+            }
         }
 
         const cleanedAge = rawAge !== undefined && rawAge !== null ? String(rawAge).trim() : '';
 
-        // ---------------------------------------------------------------------
-        // RULE SYSTEM PROCESSING (Short-circuiting on the first encountered validation error)
-        // ---------------------------------------------------------------------
         let validationReason = null;
 
-        // 1. Validate Name Field Constraints
+        // 1. Validate Name
         if (!cleanedName) {
             validationReason = 'Missing required field: name';
         }
 
-        // 2. Validate Email Field Constraints
+        // 2. Validate Email
         if (!validationReason) {
             if (!cleanedEmail) {
                 validationReason = 'Missing required field: email';
@@ -90,26 +86,27 @@ function validateImportRows(rawRows, mapping) {
             }
         }
 
-        // 3. Validate Phone Number Field Constraints (Optional field check)
+        // 3. Validate Phone Number (Optional field)
         if (!validationReason && cleanedPhone) {
             if (!PHONE_REGEX.test(cleanedPhone)) {
                 validationReason = `Phone number must be exactly 10 numerical digits: '${cleanedPhone}'`;
             }
         }
 
-        // 4. Validate Age Field Constraints (Optional field check)
+        // 4. Validate Age (Optional field)
         if (!validationReason && cleanedAge) {
-            const parsedAge = Number(cleanedAge);
-            if (!Number.isInteger(parsedAge) || String(parsedAge) !== cleanedAge) {
-                validationReason = `Age field value must be an integer: '${cleanedAge}'`;
-            } else if (parsedAge < 18) {
-                validationReason = `Age restriction violation: Client must be 18 or older. Found: ${parsedAge}`;
+            if (!/^\d+$/.test(cleanedAge)) {
+                validationReason = `Age field value must be a positive integer: '${cleanedAge}'`;
+            } else {
+                const parsedAge = Number(cleanedAge);
+                if (parsedAge < 18) {
+                    validationReason = `Age restriction violation: Client must be 18 or older. Found: ${parsedAge}`;
+                } else if (parsedAge > 120) {
+                    validationReason = `Unrealistic age value detected. Found: ${parsedAge}`;
+                }
             }
         }
 
-        // ---------------------------------------------------------------------
-        // SEPARATION PIPELINE DISPATCH
-        // ---------------------------------------------------------------------
         if (validationReason) {
             invalidRows.push({
                 rowNumber,
@@ -117,13 +114,14 @@ function validateImportRows(rawRows, mapping) {
                 rawData: rawRow
             });
         } else {
-            // Track valid email globally to trigger file deduplication errors on following loops
             seenEmailsInFile.add(cleanedEmail.toLowerCase());
 
             validRows.push({
+                rowNumber,                         // Attached to preserve precise CSV row line numbers
+                rawData: rawRow,                    // Attached to preserve raw row payloads for DB errors
                 name: cleanedName,
-                email: cleanedEmail.toLowerCase(), // Normalize down to lower-case for storage uniformity
-                phone: cleanedPhone || null,        // Store clear null placeholders instead of empty strings
+                email: cleanedEmail.toLowerCase(),
+                phone: cleanedPhone || null,
                 age: cleanedAge ? Number(cleanedAge) : null
             });
         }
