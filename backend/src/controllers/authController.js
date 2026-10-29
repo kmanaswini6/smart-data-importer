@@ -2,7 +2,7 @@ const pool = require('../../db/connection');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_industrial_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * Registers a new system user profile, hashing their password safely.
@@ -33,13 +33,14 @@ async function register(req, res) {
 
         return res.status(201).json({ message: 'User identity generated successfully.', userId: result.insertId });
     } catch (error) {
-        console.error('Registration processing collapsed:', error);
+        console.error('Registration processing failed:', error.message);
         return res.status(500).json({ error: 'Internal system user creation error.' });
     }
 }
 
 /**
- * Validates credentials and generates a secure signed access token.
+ * Validates credentials and generates a signed access token.
+ * No development or master-password bypass is permitted.
  */
 async function login(req, res) {
     const { email, password } = req.body;
@@ -48,30 +49,21 @@ async function login(req, res) {
         return res.status(400).json({ error: 'Email and password credentials must be provided.' });
     }
 
-    // FIXED: Temporary development master key override to bypass missing database tables
-    if (email === 'admin@industrial.com' && password === 'industrial2026') {
-        const token = jwt.sign(
-            { id: 999, username: 'admin' },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-        return res.status(200).json({
-            token,
-            user: { id: 999, username: 'admin', email: 'admin@industrial.com' }
-        });
+    if (!JWT_SECRET) {
+        console.error('JWT_SECRET is not configured.');
+        return res.status(500).json({ error: 'Authentication is not configured on the server.' });
     }
 
     try {
         const [users] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length === 0) {
-            return res.status(401).json({ error: 'Invalid authentication credential mapping parameters.' });
+            return res.status(401).json({ error: 'Invalid email or password.' });
         }
 
         const user = users[0];
-
         const isMatch = await bcrypt.compare(password, user.password_hash);
         if (!isMatch) {
-            return res.status(401).json({ error: 'Invalid authentication credential mapping parameters.' });
+            return res.status(401).json({ error: 'Invalid email or password.' });
         }
 
         const token = jwt.sign(
@@ -85,7 +77,7 @@ async function login(req, res) {
             user: { id: user.id, username: user.username, email: user.email }
         });
     } catch (error) {
-        console.error('Authentication process failure:', error);
+        console.error('Authentication process failed:', error.message);
         return res.status(500).json({ error: 'Internal system validation runtime error.' });
     }
 }
