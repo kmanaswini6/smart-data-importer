@@ -28,6 +28,9 @@ services:
       DB_NAME: ${DB_NAME:-smart_data_importer}
       JWT_SECRET: ${JWT_SECRET:?Set a strong JWT_SECRET in your local environment}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+    volumes:
+      - ${FIREBASE_CREDENTIAL_FILE:?Set FIREBASE_CREDENTIAL_FILE to your local Firebase service-account JSON path}:/run/secrets/firebase-service-account.json:ro
     depends_on:
       db:
         condition: service_healthy
