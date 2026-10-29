@@ -4,11 +4,20 @@ const path = require('path');
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
+const requiredConfig = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
+const missingConfig = requiredConfig.filter((key) => !process.env[key]);
+
+if (missingConfig.length > 0) {
+    throw new Error(
+        `Missing required database configuration: ${missingConfig.join(', ')}. Configure backend/.env or the container environment.`
+    );
+}
+
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'smart_data_importer',
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
@@ -19,7 +28,6 @@ async function initDB() {
     try {
         connection = await pool.getConnection();
 
-        // 1. Users Table
         await connection.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -29,16 +37,20 @@ async function initDB() {
             );
         `);
 
-        // Patch pre-existing legacy columns automatically
+        // Backward-compatible patches for databases created by earlier versions.
         try {
-            await connection.query(`ALTER TABLE users ADD COLUMN name VARCHAR(255);`);
-        } catch (e) { }
+            await connection.query('ALTER TABLE users ADD COLUMN name VARCHAR(255);');
+        } catch (error) {
+            if (!/duplicate column/i.test(error.message)) throw error;
+        }
 
         try {
-            await connection.query(`ALTER TABLE users MODIFY COLUMN username VARCHAR(255) NULL DEFAULT NULL;`);
-        } catch (e) { }
+            await connection.query('ALTER TABLE users MODIFY COLUMN username VARCHAR(255) NULL DEFAULT NULL;');
+        } catch (error) {
+            // A missing legacy username column is expected for a fresh schema.
+            if (!/unknown column|doesn't exist/i.test(error.message)) throw error;
+        }
 
-        // 2. Imports History Register
         await connection.query(`
             CREATE TABLE IF NOT EXISTS imports (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -53,7 +65,6 @@ async function initDB() {
             );
         `);
 
-        // 3. Customers Destination Table
         await connection.query(`
             CREATE TABLE IF NOT EXISTS customers (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -67,7 +78,6 @@ async function initDB() {
             );
         `);
 
-        // 4. Import Errors Anomaly Log
         await connection.query(`
             CREATE TABLE IF NOT EXISTS import_errors (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -82,7 +92,7 @@ async function initDB() {
 
         console.log('Database tables (users, imports, customers, import_errors) verified and ready.');
     } catch (err) {
-        console.error('Database initialization warning:', err.message);
+        console.error('Database initialization failed:', err.message);
     } finally {
         if (connection) connection.release();
     }
