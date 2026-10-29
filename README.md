@@ -7,7 +7,7 @@ The repository contains a React frontend and a Node.js/Express backend. The proj
 ## What it does
 
 - **CSV upload and inspection:** accepts CSV files and reads their headers and rows.
-- **Schema mapping:** suggests how source columns map to the application's customer fields (\`name\`, \`email\`, \`phone\`, and \`age\`).
+- **Schema mapping:** suggests how source columns map to the application's customer fields (`name`, `email`, `phone`, and `age`).
 - **AI-assisted mapping:** uses the Groq API to suggest header-to-field matches. If the AI mapping request fails, the backend falls back to empty suggestions so the user can map columns manually.
 - **Manual mapping review:** lets users review or change column assignments before processing.
 - **Data validation:** checks required name and email fields, email format, duplicate emails within an import, optional phone format, and age constraints.
@@ -21,15 +21,15 @@ The repository contains a React frontend and a Node.js/Express backend. The proj
 |---|---|
 | Frontend | React, Vite, Axios |
 | Backend | Node.js, Express |
-| Database | MySQL 8, \`mysql2\` |
-| CSV processing | \`csv-parser\` |
+| Database | MySQL 8, `mysql2` |
+| CSV processing | `csv-parser` |
 | AI-assisted mapping | Groq SDK, Llama 3.3 70B Versatile |
 | Authentication | Firebase Authentication, Firebase Admin |
 | Local containers | Docker, Docker Compose |
 
 ## Architecture
 
-\`\`\`text
+```text
 React + Vite frontend
         |
         | HTTP / JSON + CSV upload
@@ -39,7 +39,7 @@ Express API
         +--> CSV header extraction
         |
         +--> Groq-assisted header mapping
-        |       \`--> manual mapping fallback
+        |       `--> manual mapping fallback
         |
         +--> field validation
         |
@@ -51,11 +51,11 @@ MySQL
   - imports
   - customers
   - import_errors
-\`\`\`
+```
 
 ## Repository Layout
 
-\`\`\`text
+```text
 smart-data-importer/
 ├── frontend/                 # React UI
 │   └── src/
@@ -72,7 +72,7 @@ smart-data-importer/
 ├── customers.csv              # Small sample input
 ├── valid_customers.csv         # Sample customer data
 └── docker-compose.yml
-\`\`\`
+```
 
 ## Requirements
 
@@ -85,16 +85,16 @@ smart-data-importer/
 
 ### 1. Clone the repository
 
-\`\`\`bash
+```bash
 git clone https://github.com/kmanaswini6/smart-data-importer.git
 cd smart-data-importer
-\`\`\`
+```
 
 ### 2. Configure the backend
 
-Create \`backend/.env\` with your own local database and service configuration:
+Create `backend/.env` with your own local database and service configuration:
 
-\`\`\`env
+```env
 PORT=5000
 DB_HOST=localhost
 DB_USER=your_mysql_user
@@ -102,57 +102,59 @@ DB_PASSWORD=your_mysql_password
 DB_NAME=smart_data_importer
 JWT_SECRET=replace_with_a_long_random_secret
 GROQ_API_KEY=your_groq_api_key
-\`\`\`
+```
 
-Place your Firebase Admin service-account JSON file at \`backend/serviceAccountKey.json\`, as expected by the current backend middleware. Do not commit this file or any real credentials.
+Place your Firebase Admin service-account JSON file at `backend/serviceAccountKey.json`, as expected by the current backend middleware. Do not commit this file or any real credentials.
 
-Create the database user and grant it access to the \`smart_data_importer\` database, or use the included Docker Compose setup after replacing its example credentials with local values. Do not use development credentials in a public deployment.
+Create the database user and grant it access to the `smart_data_importer` database, or use the included Docker Compose setup after replacing its example credentials with local values. Do not use development credentials in a public deployment.
 
 ### 3. Configure the frontend
 
-Create \`frontend/.env.local\` and provide the Firebase client configuration used by \`frontend/src/firebase.js\`:
+Create `frontend/.env.local` and provide the Firebase client configuration used by `frontend/src/firebase.js`:
 
-\`\`\`env
+```env
 VITE_FIREBASE_API_KEY=your_firebase_web_api_key
 VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=your_firebase_project_id
 VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
 VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
 VITE_FIREBASE_APP_ID=your_firebase_app_id
-\`\`\`
+```
 
-The current frontend calls the backend at \`http://localhost:5000\`. Update that base URL in \`frontend/src/App.jsx\` if you run the API elsewhere.
+The current frontend calls the backend at `http://localhost:5000`. Update that base URL in `frontend/src/App.jsx` if you run the API elsewhere.
 
 ### 4. Install dependencies
 
 In one terminal:
 
-\`\`\`bash
+```bash
 cd backend
 npm install
 npm run dev
-\`\`\`
+```
 
 In another terminal:
 
-\`\`\`bash
+```bash
 cd frontend
 npm install
 npm run dev
-\`\`\`
+```
 
-Open the local URL printed by Vite, typically \`http://localhost:5173\`.
+Open the local URL printed by Vite, typically `http://localhost:5173`.
 
 ## Configuration Notes
 
-- Groq-based mapping requires a valid \`GROQ_API_KEY\`. If the AI request fails, the upload route is designed to return mappings that can be assigned manually.
+- Groq-based mapping requires a valid `GROQ_API_KEY`. If the AI request fails, the upload route is designed to return mappings that can be assigned manually.
 - The main import API verifies Firebase ID tokens, so Firebase client configuration and the backend service-account credentials must match the same Firebase project.
 - The backend initializes the MySQL tables when its database connection is available.
 - The frontend currently uses a local API URL in its request handlers; deployment requires configuring the API URL for the target environment.
 
-## Project Status
+## Project Status and Security
 
 This is an in-progress MVP. The repository contains the core upload, mapping, validation, persistence, and report components, but the full workflow depends on correct MySQL, Firebase, and optional Groq configuration. Validate the application in your own environment before relying on it for production data.
+
+**Before making this repository public or deploying it, remove development-only hard-coded credentials and authentication bypasses from the code and Docker configuration, move secrets to environment variables, and rotate any credentials that may have been exposed.** Do not use the current authentication setup for production until it has been reviewed and tested.
 
 ## Potential Next Steps
 
