@@ -157,6 +157,7 @@ The AI feature is **column-mapping assistance**; the current code does not imple
 
 - Do not commit .env files, Firebase service-account JSON, API keys, database passwords, JWT secrets, or private keys.
 - Use unique local secrets and rotate any credentials that may have been exposed before using this project publicly.
+- Removing a credential from the latest file does not remove it from earlier Git commits. Because this repository was already public, keep it private until you review and clean its Git history; rotate any real credentials that appeared in earlier versions.
 - The development master-login bypass and hard-coded JWT fallback have been removed from the authentication controller.
 - Docker Compose reads credentials from environment variables instead of embedding fixed values.
 - This project is an MVP and has not been represented as production-ready. Review and test authentication, file upload limits, error handling, and database access before deployment.
