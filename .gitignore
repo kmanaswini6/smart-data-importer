@@ -1,17 +1,36 @@
+# Dependencies and build outputs
 node_modules/
-backend/node_modules/
-frontend/node_modules/
-
-.env
-backend/.env
-frontend/.env.local
-
-backend/uploads/*
-!backend/uploads/.gitkeep
+**/node_modules/
 dist/
 build/
+coverage/
 
+# Local environment files (keep only the example templates)
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Uploaded files and logs
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/
 *.log
+
+# Credentials, private keys, and certificates
+**/serviceAccountKey.json
+**/*service-account*.json
+**/*firebase-adminsdk*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# OS/editor files
 .DS_Store
 Thumbs.db
-serviceAccountKey.json
